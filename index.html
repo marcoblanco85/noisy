@@ -418,6 +418,33 @@
       display: none;
     }
 
+    /* ── READ ALOUD BUTTON ── */
+    .btn-read {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 6px;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: all .2s;
+      touch-action: manipulation;
+    }
+
+    .btn-read:hover {
+      border-color: var(--accent);
+      color: var(--accent2);
+    }
+
+    .btn-read.speaking {
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+
     /* ── TOAST ── */
     #toast {
       position: fixed;
@@ -639,18 +666,19 @@
     toggleVoice(e);
   });
 
-  function speakText(text) {
+  function speakText(text, onEnd) {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
-    // Limpiar markdown y emojis
     const cleanText = text.replace(/[*_#`~]/g, '').replace(/[\u{1F600}-\u{1F6FF}]/gu, '');
     const msg = new SpeechSynthesisUtterance(cleanText);
     msg.lang = 'es-ES';
-    msg.rate = 1.05; // Un poco más rápido
+    msg.rate = 1.05;
     
     const voices = window.speechSynthesis.getVoices();
     const esVoice = voices.find(v => v.lang.startsWith('es') && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Female')));
     if (esVoice) msg.voice = esVoice;
+
+    if (onEnd) msg.onend = onEnd;
     
     window.speechSynthesis.speak(msg);
   }
@@ -892,17 +920,61 @@
     avatar.className = 'avatar';
     avatar.textContent = role === 'user' ? '👤' : '✨';
 
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex';
+    wrapper.style.flexDirection = 'column';
+    wrapper.style.maxWidth = 'calc(100% - 50px)';
+
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
+    bubble.style.maxWidth = '100%';
 
     if (role === 'ai') {
       bubble.innerHTML = renderMarkdown(text);
+
+      // Botón de leer en voz alta
+      const btnRead = document.createElement('button');
+      btnRead.className = 'btn-read';
+      btnRead.innerHTML = '🔊 Leer';
+
+      let isSpeaking = false;
+      const handleRead = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (isSpeaking) {
+          window.speechSynthesis.cancel();
+          btnRead.classList.remove('speaking');
+          btnRead.innerHTML = '🔊 Leer';
+          isSpeaking = false;
+        } else {
+          // Detener cualquier otra lectura y resetear otros botones
+          window.speechSynthesis.cancel();
+          document.querySelectorAll('.btn-read.speaking').forEach(b => {
+            b.classList.remove('speaking');
+            b.innerHTML = '🔊 Leer';
+          });
+          isSpeaking = true;
+          btnRead.classList.add('speaking');
+          btnRead.innerHTML = '⏹ Detener';
+          speakText(bubble.innerText, () => {
+            btnRead.classList.remove('speaking');
+            btnRead.innerHTML = '🔊 Leer';
+            isSpeaking = false;
+          });
+        }
+      };
+      btnRead.addEventListener('click', handleRead);
+      btnRead.addEventListener('touchstart', handleRead, {passive: false});
+
+      wrapper.appendChild(bubble);
+      wrapper.appendChild(btnRead);
     } else {
       bubble.textContent = text;
+      wrapper.appendChild(bubble);
     }
 
     msg.appendChild(avatar);
-    msg.appendChild(bubble);
+    msg.appendChild(wrapper);
     chat.appendChild(msg);
 
     if (scroll) scrollDown();
