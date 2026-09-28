@@ -375,23 +375,44 @@
     #user-input:focus { outline: none; border-color: var(--accent); }
     #user-input::placeholder { color: var(--text-muted); }
 
-    .btn-send {
+    .btn-send, .btn-mic {
       width: 48px; height: 48px;
-      background: var(--accent);
-      border: none;
+      background: var(--surface2);
+      border: 1px solid var(--border);
       border-radius: 12px;
-      color: white;
+      color: var(--text);
       font-size: 1.2rem;
       cursor: pointer;
       display: flex; align-items: center; justify-content: center;
-      transition: opacity .2s, transform .1s;
+      transition: all .2s;
       flex-shrink: 0;
       touch-action: manipulation;
     }
 
+    .btn-send {
+      background: var(--accent);
+      color: white;
+      border: none;
+    }
+
     .btn-send:hover { opacity: 0.85; }
-    .btn-send:active { transform: scale(.95); }
+    .btn-send:active, .btn-mic:active { transform: scale(.95); }
     .btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-mic:hover { border-color: var(--accent); color: var(--accent); }
+    
+    .btn-mic.recording {
+      background: rgba(248, 113, 113, 0.15);
+      border-color: var(--danger);
+      color: var(--danger);
+      animation: pulse-red 1.5s infinite;
+    }
+
+    @keyframes pulse-red {
+      0% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.4); }
+      70% { box-shadow: 0 0 0 10px rgba(248, 113, 113, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
+    }
 
     .footer-note {
       display: none;
@@ -481,7 +502,8 @@
 <!-- INPUT FOOTER -->
 <footer>
   <div class="input-row">
-    <textarea id="user-input" placeholder="Escribe tu mensaje... (Enter para enviar, Shift+Enter para nueva línea)" rows="1"></textarea>
+    <button class="btn-mic" id="btn-mic" title="Hablar por voz">🎤</button>
+    <textarea id="user-input" placeholder="Escribe tu mensaje... (Enter para enviar)" rows="1"></textarea>
     <button class="btn-send" id="btn-send" title="Enviar">➤</button>
   </div>
   <div class="footer-note">
@@ -522,6 +544,7 @@
   const welcome    = document.getElementById('welcome');
   const userInput  = document.getElementById('user-input');
   const btnSend    = document.getElementById('btn-send');
+  const btnMic     = document.getElementById('btn-mic');
   const apiBanner  = document.getElementById('api-banner');
   const apiInput   = document.getElementById('api-key-input');
   const btnSaveKey = document.getElementById('btn-save-key');
@@ -532,6 +555,108 @@
   const btnSystem  = document.getElementById('btn-system');
   const btnClear   = document.getElementById('btn-clear');
   const toast      = document.getElementById('toast');
+
+  let isVoiceMode = false;
+  let recognition;
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (SpeechRecognition) {
+    recognition = new SpeechRecognition();
+    recognition.lang = 'es-ES';
+    recognition.interimResults = true;
+    
+    recognition.onstart = () => {
+      btnMic.classList.add('recording');
+      userInput.placeholder = 'Escuchando... (habla ahora)';
+      window.speechSynthesis.cancel(); // Stop talking if listening
+    };
+    
+    recognition.onresult = (event) => {
+      let finalTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        } else {
+          userInput.value = event.results[i][0].transcript; // show interim
+        }
+      }
+      if (finalTranscript) {
+        userInput.value = finalTranscript;
+        isVoiceMode = true;
+        recognition.stop();
+        setTimeout(send, 500); // Auto send after brief delay
+      }
+    };
+    
+    recognition.onerror = (e) => {
+      stopVoice();
+      if (e.error !== 'no-speech') showToast('Error de micrófono: ' + e.error);
+    };
+    
+    recognition.onend = () => stopVoice();
+  } else {
+    btnMic.style.display = 'none';
+  }
+
+  function stopVoice() {
+    btnMic.classList.remove('recording');
+    userInput.placeholder = "Escribe tu mensaje... (Enter para enviar)";
+  }
+
+  let voiceGuard = false; // Evita doble disparo touch+click en móvil
+
+  function toggleVoice(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (voiceGuard) return;
+    voiceGuard = true;
+    setTimeout(() => voiceGuard = false, 400);
+
+    if (!SpeechRecognition) {
+      showToast('⚠️ Tu navegador no soporta voz. Usa Chrome.');
+      return;
+    }
+
+    if (btnMic.classList.contains('recording')) {
+      recognition.stop();
+    } else {
+      showToast('🎤 Escuchando...');
+      userInput.value = '';
+      try {
+        recognition.start();
+      } catch(err) {
+        stopVoice();
+        showToast('⚠️ Abre el archivo en Chrome. Puede necesitar HTTPS para el micrófono.');
+      }
+    }
+  }
+
+  // Solo touchstart en móvil, click en escritorio — no ambos
+  btnMic.addEventListener('touchstart', toggleVoice, {passive: false});
+  btnMic.addEventListener('click', function(e) {
+    if (e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) return; // ya fue por touch
+    toggleVoice(e);
+  });
+
+  function speakText(text) {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    // Limpiar markdown y emojis
+    const cleanText = text.replace(/[*_#`~]/g, '').replace(/[\u{1F600}-\u{1F6FF}]/gu, '');
+    const msg = new SpeechSynthesisUtterance(cleanText);
+    msg.lang = 'es-ES';
+    msg.rate = 1.05; // Un poco más rápido
+    
+    const voices = window.speechSynthesis.getVoices();
+    const esVoice = voices.find(v => v.lang.startsWith('es') && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Female')));
+    if (esVoice) msg.voice = esVoice;
+    
+    window.speechSynthesis.speak(msg);
+  }
+
+  // Cargar voces en background
+  if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
 
   // ─────────────────────────────────────────────
   //  INIT
@@ -736,6 +861,11 @@
       history.push({ role: 'assistant', content: fullText });
       saveHistory();
 
+      if (isVoiceMode) {
+        speakText(fullText);
+        isVoiceMode = false;
+      }
+
     } catch (err) {
       typingEl?.remove();
       addBubble('ai', `❌ **Error:** ${err.message}\n\nVerifica tu API key o revisa [openrouter.ai](https://openrouter.ai)`, false);
@@ -745,6 +875,11 @@
     btnSend.disabled = false;
     userInput.focus();
   }
+
+  // Si el usuario escribe manualmente mientras la IA habla, se calla
+  userInput.addEventListener('keydown', () => {
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+  });
 
   // ─────────────────────────────────────────────
   //  DOM HELPERS
